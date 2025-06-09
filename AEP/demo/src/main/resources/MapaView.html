@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mapa Maringá</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="lib/leaflet.css"/>
+  <style>
+    body { margin: 0; padding: 0; display: flex; height: 100vh; font-family: sans-serif; }
+    #map { flex: 3; }
+    #sidebar {
+      flex: 1;
+      background-color: #f0f0f0;
+      padding: 15px;
+      box-sizing: border-box;
+    }
+    input, button {
+      display: block;
+      width: 100%;
+      margin: 10px 0;
+      padding: 8px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="sidebar">
+  <h3>Rotas Seguras - Maringá</h3>
+  <label>Origem:</label>
+  <input type="text" id="origemInput" placeholder="Digite um endereço em Maringá">
+  <label>Destino:</label>
+  <input type="text" id="destinoInput" placeholder="Digite um endereço em Maringá">
+  <button onclick="buscarCoordenadas()">Traçar Rota</button>
+</div>
+
+<script src="lib/leaflet.js"></script>
+<script>
+  let bounds = L.latLngBounds(
+          L.latLng(-23.45, -51.97),
+          L.latLng(-23.39, -51.88)
+  );
+
+  let map = L.map('map', {
+    minZoom: 13,
+    maxZoom: 17,
+    maxBounds: bounds
+  }).setView([-23.4208, -51.9331], 14);
+
+  map.on('drag', function () {
+    map.panInsideBounds(bounds, { animate: false });
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+  }).addTo(map);
+
+  let origem = null, destino = null, rotaLayer = null;
+
+  map.on('click', function(e) {
+    if (!origem) {
+      origem = e.latlng;
+      L.marker(origem).addTo(map).bindPopup("Origem").openPopup();
+    } else if (!destino) {
+      destino = e.latlng;
+      L.marker(destino).addTo(map).bindPopup("Destino").openPopup();
+      calcularRota();
+    }
+  });
+
+  function buscarCoordenadas() {
+    const origemTexto = document.getElementById('origemInput').value;
+    const destinoTexto = document.getElementById('destinoInput').value;
+
+    Promise.all([geocodificar(origemTexto), geocodificar(destinoTexto)]).then(([origemCoord, destinoCoord]) => {
+      origem = origemCoord;
+      destino = destinoCoord;
+      L.marker(origem).addTo(map).bindPopup("Origem").openPopup();
+      L.marker(destino).addTo(map).bindPopup("Destino").openPopup();
+      map.setView(origem, 14);
+      calcularRota();
+    });
+  }
+
+  function geocodificar(endereco) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(endereco)}`;
+    return fetch(url)
+            .then(res => res.json())
+            .then(data => {
+              if (!data || data.length === 0 || !data[0].display_name.includes("Maring")) {
+                alert("O endereço precisa estar dentro de Maringá - PR.");
+                throw new Error("Fora de Maringá");
+              }
+              return {
+                lat: parseFloat(data[0].lat),
+                lng: parseFloat(data[0].lon)
+              };
+            });
+  }
+
+  function calcularRota() {
+    const url = `https://router.project-osrm.org/route/v1/foot/${origem.lng},${origem.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson`;
+    fetch(url)
+            .then(res => res.json())
+            .then(data => {
+              const coords = data.routes[0].geometry.coordinates.map(p => [p[1], p[0]]);
+              if (rotaLayer) map.removeLayer(rotaLayer);
+              rotaLayer = L.polyline(coords, {color: 'blue'}).addTo(map);
+              rotaLayer.on('click', () => {
+                abrirPopupDeAvaliacao(coords[Math.floor(coords.length / 2)]);
+              });
+            });
+  }
+
+  function abrirPopupDeAvaliacao(latlng) {
+    const popup = L.popup()
+            .setLatLng(latlng)
+            .setContent(\`
+          <b>Avalie este trecho:</b><br/>
+          Segurança: <input id='seg' type='number' min='0' max='5'/><br/>
+          Iluminação: <input id='ilu' type='number' min='0' max='5'/><br/>
+          Tráfego: <input id='traf' type='number' min='0' max='5'/><br/>
+          <button onclick='enviarAvaliacao()'>Enviar</button>
+        \`)
+        .openOn(map);
+    }
+
+    function enviarAvaliacao() {
+      const dados = {
+        seguranca: document.getElementById('seg').value,
+        iluminacao: document.getElementById('ilu').value,
+        trafego: document.getElementById('traf').value
+      };
+      if (window.javaConnector) {
+        window.javaConnector.receberAvaliacao(JSON.stringify(dados));
+      }
+      map.closePopup();
+    }
+  </script>
+</body>
+</html>
